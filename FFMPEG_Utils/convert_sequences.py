@@ -137,6 +137,116 @@ def split_video_into_chunks(video_path, output_dir, chunk_frames=81, frame_rate=
     print(f"Successfully split into {len(chunk_files)} chunks")
     return True, len(chunk_files)
 
+def process_single_file(file_path, output_dir, frame_rate=16, 
+                       codec='libx264', preset='medium', crf=18, pixel_format='yuv420p', 
+                       start_frame=None, interpolate_fps=None, interpolation_mode='mci', 
+                       slow_motion_factor=None, reverse_slow_motion_factor=None):
+    """
+    Process a single file (image sequence or video) and convert it to MP4.
+    """
+    file_path = Path(file_path)
+    
+    if not file_path.exists():
+        print(f"File not found: {file_path}")
+        return False
+    
+    # Check if it's a video file
+    video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v'}
+    if file_path.suffix.lower() in video_extensions:
+        print(f"Processing video file: {file_path.name}")
+        # For video files, we'll just copy/convert them with the specified settings
+        output_file = os.path.join(output_dir, f"{file_path.stem}.mp4")
+        
+        cmd = ['ffmpeg', '-y', '-i', str(file_path)]
+        
+        # Add video filters
+        if slow_motion_factor is not None:
+            target_fps = frame_rate / slow_motion_factor
+            filter_complex = f"setpts={slow_motion_factor}*PTS,fps={target_fps}"
+            cmd.extend(['-vf', filter_complex])
+        elif reverse_slow_motion_factor is not None:
+            filter_complex = f"setpts={1.0/reverse_slow_motion_factor}*PTS"
+            cmd.extend(['-vf', filter_complex])
+        elif interpolate_fps is not None:
+            if interpolate_fps > frame_rate:
+                filter_complex = f"minterpolate=fps={interpolate_fps}:mi_mode={interpolation_mode}"
+            else:
+                filter_complex = f"fps={interpolate_fps}"
+            cmd.extend(['-vf', filter_complex])
+        else:
+            # Just set the frame rate
+            cmd.extend(['-r', str(frame_rate)])
+        
+        cmd.extend([
+            '-c:v', codec,
+            '-preset', preset,
+            '-crf', str(crf),
+            '-pix_fmt', pixel_format,
+            output_file
+        ])
+        
+        print(f"   Converting video: {file_path.name}")
+        if slow_motion_factor is not None:
+            target_fps = frame_rate / slow_motion_factor
+            print(f"   Slow Motion: {frame_rate}fps → {target_fps:.1f}fps ({slow_motion_factor}x slower)")
+        elif reverse_slow_motion_factor is not None:
+            print(f"   Reverse Slow Motion: {reverse_slow_motion_factor}x speed up (maintaining {frame_rate}fps)")
+        elif interpolate_fps is not None:
+            if interpolate_fps > frame_rate:
+                print(f"   Upsampling: {frame_rate}fps → {interpolate_fps}fps ({interpolation_mode} mode)")
+            else:
+                print(f"   Downsampling: {frame_rate}fps → {interpolate_fps}fps (frame dropping)")
+        else:
+            print(f"   Frame Rate: {frame_rate}fps")
+        print(f"   Output: {output_file}")
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            print(f"Successfully converted: {output_file}")
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to convert {file_path.name}: {e}")
+            if e.stderr:
+                print(f"   Error: {e.stderr}")
+            return False
+    
+    # Check if it's an image file
+    image_extensions = {'.jpeg', '.jpg', '.png', '.tiff', '.tga', '.bmp', '.exr'}
+    if file_path.suffix.lower() in image_extensions:
+        print(f"Processing single image: {file_path.name}")
+        # For single images, create a 1-frame video
+        output_file = os.path.join(output_dir, f"{file_path.stem}.mp4")
+        
+        cmd = [
+            'ffmpeg', '-y',
+            '-loop', '1',  # Loop the image
+            '-i', str(file_path),
+            '-t', '1',  # 1 second duration
+            '-r', str(frame_rate),
+            '-c:v', codec,
+            '-preset', preset,
+            '-crf', str(crf),
+            '-pix_fmt', pixel_format,
+            output_file
+        ]
+        
+        print(f"   Converting single image: {file_path.name}")
+        print(f"   Duration: 1 second at {frame_rate}fps")
+        print(f"   Output: {output_file}")
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            print(f"Successfully converted: {output_file}")
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to convert {file_path.name}: {e}")
+            if e.stderr:
+                print(f"   Error: {e.stderr}")
+            return False
+    
+    print(f"Unsupported file type: {file_path.suffix}")
+    return False
+
 def find_image_sequences(directory="."):
     """
     Scan directory for image sequences and group them by pattern.
@@ -193,7 +303,8 @@ def find_image_sequences(directory="."):
 
 def convert_sequence_to_mp4(sequence_name, frame_numbers, output_dir, frame_rate=16, 
                            codec='libx264', preset='medium', crf=18, pixel_format='yuv420p', start_frame=None, 
-                           interpolate_fps=None, interpolation_mode='mci', slow_motion_factor=None):
+                           interpolate_fps=None, interpolation_mode='mci', slow_motion_factor=None, 
+                           reverse_slow_motion_factor=None):
     """
     Convert an image sequence to MP4 using ffmpeg.
     """
@@ -228,11 +339,15 @@ def convert_sequence_to_mp4(sequence_name, frame_numbers, output_dir, frame_rate
         '-i', input_pattern,
     ]
     
-    # Add video filter for interpolation or slow motion
+    # Add video filter for interpolation, slow motion, or reverse slow motion
     if slow_motion_factor is not None:
         # Slow motion: stretch timeline and reduce frame rate
         target_fps = frame_rate / slow_motion_factor
         filter_complex = f"setpts={slow_motion_factor}*PTS,fps={target_fps}"
+        cmd.extend(['-vf', filter_complex])
+    elif reverse_slow_motion_factor is not None:
+        # Reverse slow motion: compress timeline and maintain frame rate
+        filter_complex = f"setpts={1.0/reverse_slow_motion_factor}*PTS"
         cmd.extend(['-vf', filter_complex])
     elif interpolate_fps is not None:
         if interpolate_fps > frame_rate:
@@ -257,6 +372,8 @@ def convert_sequence_to_mp4(sequence_name, frame_numbers, output_dir, frame_rate
     if slow_motion_factor is not None:
         target_fps = frame_rate / slow_motion_factor
         print(f"   Slow Motion: {frame_rate}fps → {target_fps:.1f}fps ({slow_motion_factor}x slower)")
+    elif reverse_slow_motion_factor is not None:
+        print(f"   Reverse Slow Motion: {reverse_slow_motion_factor}x speed up (maintaining {frame_rate}fps)")
     elif interpolate_fps is not None:
         if interpolate_fps > frame_rate:
             print(f"   Upsampling: {frame_rate}fps → {interpolate_fps}fps ({interpolation_mode} mode)")
@@ -276,6 +393,8 @@ def convert_sequence_to_mp4(sequence_name, frame_numbers, output_dir, frame_rate
 
 def main():
     parser = argparse.ArgumentParser(description='Convert image sequences to MP4 videos')
+    parser.add_argument('files', nargs='*', 
+                       help='Specific files to process (image sequences or videos). If not provided, auto-detects all sequences/videos in directory.')
     parser.add_argument('--frame-rate', '-f', type=int, default=16, 
                        help='Frame rate for output videos (default: 16)')
     parser.add_argument('--output-dir', '-o', default='output', 
@@ -299,6 +418,8 @@ def main():
                        help='Interpolation mode: mci=motion compensated, blend=blend frames, dup=duplicate, me=motion estimation, mc=motion compensation (default: mci)')
     parser.add_argument('--slow-motion', type=float, 
                        help='Create slow motion effect: factor of how much slower (e.g., 3.0 for 3x slower)')
+    parser.add_argument('--reverse-slow-motion', type=float, 
+                       help='Reverse slow motion effect: factor of how much faster (e.g., 3.0 for 3x speed up)')
     parser.add_argument('--split-videos', action='store_true',
                        help='Split all videos in directory into 81-frame chunks')
     parser.add_argument('--chunk-frames', type=int, default=81,
@@ -328,6 +449,8 @@ def main():
         if args.slow_motion is not None:
             target_fps = args.frame_rate / args.slow_motion
             print(f"Slow Motion: {args.frame_rate}fps → {target_fps:.1f}fps ({args.slow_motion}x slower)")
+        elif args.reverse_slow_motion is not None:
+            print(f"Reverse Slow Motion: {args.reverse_slow_motion}x speed up (maintaining {args.frame_rate}fps)")
         elif args.interpolate_fps is not None:
             if args.interpolate_fps > args.frame_rate:
                 print(f"Frame Upsampling: {args.frame_rate}fps → {args.interpolate_fps}fps ({args.interpolation_mode} mode)")
@@ -401,55 +524,120 @@ def main():
     
     else:
         # Image sequence conversion mode
-        sequences = find_image_sequences()
-        
-        if not sequences:
-            print("   No valid image sequences found!")
-            print("   Make sure your files follow a pattern like: name_0001.jpg, name_0002.jpg, etc.")
-            return 1
-        
-        print(f"Found {len(sequences)} image sequences:")
-        for name, frames in sequences.items():
-            frame_count = len(frames)
-            min_frame = min(frames)
-            max_frame = max(frames)
-            print(f"   • {name}: {frame_count} frames ({min_frame:04d}-{max_frame:04d})")
-        print()
-        
-        if args.dry_run:
-            print("Dry run mode - no files will be converted")
-            return 0
-        
-        # Convert each sequence
-        successful = 0
-        failed = 0
-        
-        for sequence_name, frame_numbers in sequences.items():
-            if convert_sequence_to_mp4(
-                sequence_name, frame_numbers, args.output_dir,
-                args.frame_rate, args.codec, args.preset, args.crf, args.pixel_format, args.start_frame,
-                args.interpolate_fps, args.interpolation_mode, args.slow_motion
-            ):
-                successful += 1
-            else:
-                failed += 1
+        if args.files:
+            # Process specific files
+            print("File Converter")
+            print("=" * 50)
+            print(f"Processing {len(args.files)} specified files")
+            print(f"Frame Rate: {args.frame_rate} fps")
+            print(f"Output Directory: {args.output_dir}")
+            print(f"Codec: {args.codec}")
+            print(f"Preset: {args.preset}")
+            print(f"CRF: {args.crf}")
+            if args.start_frame is not None:
+                print(f"Start Frame: {args.start_frame}")
+            if args.slow_motion is not None:
+                target_fps = args.frame_rate / args.slow_motion
+                print(f"Slow Motion: {args.frame_rate}fps → {target_fps:.1f}fps ({args.slow_motion}x slower)")
+            elif args.reverse_slow_motion is not None:
+                print(f"Reverse Slow Motion: {args.reverse_slow_motion}x speed up (maintaining {args.frame_rate}fps)")
+            elif args.interpolate_fps is not None:
+                if args.interpolate_fps > args.frame_rate:
+                    print(f"Frame Upsampling: {args.frame_rate}fps → {args.interpolate_fps}fps ({args.interpolation_mode} mode)")
+                else:
+                    print(f"Frame Downsampling: {args.frame_rate}fps → {args.interpolate_fps}fps (frame dropping)")
             print()
+            
+            if args.dry_run:
+                print("Dry run mode - no files will be converted")
+                print("Files that would be processed:")
+                for file in args.files:
+                    print(f"   • {file}")
+                return 0
+            
+            # Process each specified file
+            successful = 0
+            failed = 0
+            
+            for file_path in args.files:
+                if process_single_file(
+                    file_path, args.output_dir,
+                    args.frame_rate, args.codec, args.preset, args.crf, args.pixel_format, args.start_frame,
+                    args.interpolate_fps, args.interpolation_mode, args.slow_motion, args.reverse_slow_motion
+                ):
+                    successful += 1
+                else:
+                    failed += 1
+                print()
+            
+            # Summary
+            print("=" * 50)
+            print(f"File conversion complete!")
+            print(f"Successful: {successful}")
+            print(f"Failed: {failed}")
+            
+            if successful > 0:
+                print(f"\n Output files in '{args.output_dir}' directory:")
+                output_files = [f for f in os.listdir(args.output_dir) if f.endswith('.mp4')]
+                for file in sorted(output_files):
+                    file_path = os.path.join(args.output_dir, file)
+                    size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                    print(f"   • {file} ({size_mb:.1f} MB)")
+            
+            return 0 if failed == 0 else 1
         
-        # Summary
-        print("=" * 50)
-        print(f"Conversion complete!")
-        print(f"Successful: {successful}")
-        print(f"Failed: {failed}")
-        
-        if successful > 0:
-            print(f"\n Output files in '{args.output_dir}' directory:")
-            output_files = [f for f in os.listdir(args.output_dir) if f.endswith('.mp4')]
-            for file in sorted(output_files):
-                file_path = os.path.join(args.output_dir, file)
-                size_mb = os.path.getsize(file_path) / (1024 * 1024)
-                print(f"   • {file} ({size_mb:.1f} MB)")
-        
-        return 0 if failed == 0 else 1
+        else:
+            # Auto-detect image sequences
+            sequences = find_image_sequences()
+            
+            if not sequences:
+                print("   No valid image sequences found!")
+                print("   Make sure your files follow a pattern like: name_0001.jpg, name_0002.jpg, etc.")
+                print("   Or specify files directly: python convert_sequences.py file1.jpg file2.mp4")
+                return 1
+            
+            print(f"Found {len(sequences)} image sequences:")
+            for name, frames in sequences.items():
+                frame_count = len(frames)
+                min_frame = min(frames)
+                max_frame = max(frames)
+                print(f"   • {name}: {frame_count} frames ({min_frame:04d}-{max_frame:04d})")
+            print()
+            
+            if args.dry_run:
+                print("Dry run mode - no files will be converted")
+                return 0
+            
+            # Convert each sequence
+            successful = 0
+            failed = 0
+            
+            for sequence_name, frame_numbers in sequences.items():
+                if convert_sequence_to_mp4(
+                    sequence_name, frame_numbers, args.output_dir,
+                    args.frame_rate, args.codec, args.preset, args.crf, args.pixel_format, args.start_frame,
+                    args.interpolate_fps, args.interpolation_mode, args.slow_motion, args.reverse_slow_motion
+                ):
+                    successful += 1
+                else:
+                    failed += 1
+                print()
+            
+            # Summary
+            print("=" * 50)
+            print(f"Conversion complete!")
+            print(f"Successful: {successful}")
+            print(f"Failed: {failed}")
+            
+            if successful > 0:
+                print(f"\n Output files in '{args.output_dir}' directory:")
+                output_files = [f for f in os.listdir(args.output_dir) if f.endswith('.mp4')]
+                for file in sorted(output_files):
+                    file_path = os.path.join(args.output_dir, file)
+                    size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                    print(f"   • {file} ({size_mb:.1f} MB)")
+            
+            return 0 if failed == 0 else 1
 
 if __name__ == "__main__":
     sys.exit(main()) 

@@ -6,6 +6,7 @@ A powerful Python script that converts image sequences to MP4 videos and splits 
 
 ### 🎬 Image Sequence Conversion
 - **Automatic Detection**: Finds image sequences by analyzing file patterns
+- **Direct File Input**: Specify individual files to process
 - **Multiple Formats**: Supports JPEG, PNG, TIFF, TGA, BMP, EXR
 - **Smart Naming**: Handles various naming conventions (e.g., `render_001.png`, `shot_v001_0001.exr`)
 - **Batch Processing**: Converts all sequences in a directory at once
@@ -13,6 +14,7 @@ A powerful Python script that converts image sequences to MP4 videos and splits 
 ### 🎥 Video Processing
 - **Frame Interpolation**: Upsample frame rates using motion-compensated interpolation
 - **Slow Motion**: Create smooth slow-motion effects with timeline stretching
+- **Reverse Slow Motion**: Speed up slow-motion videos back to original speed
 - **Custom Start Frames**: Override auto-detected frame numbers
 - **Quality Control**: Adjustable codec, preset, CRF, and pixel format settings
 
@@ -64,6 +66,9 @@ sudo yum install ffmpeg
 # Convert all image sequences in current directory
 python convert_sequences.py
 
+# Convert specific files
+python convert_sequences.py video1.mp4 image1.jpg sequence_0001.png
+
 # Specify output directory
 python convert_sequences.py --output-dir videos
 
@@ -76,6 +81,9 @@ python convert_sequences.py --frame-rate 24
 ```bash
 # Slow motion (3x slower)
 python convert_sequences.py --frame-rate 48 --slow-motion 3.0
+
+# Reverse slow motion (3x speed up)
+python convert_sequences.py --frame-rate 16 --reverse-slow-motion 3.0
 
 # Frame interpolation (upsample to 60fps)
 python convert_sequences.py --interpolate-fps 60
@@ -119,6 +127,7 @@ python convert_sequences.py --split-videos --output-dir chunks
 | `--interpolate-fps` | `-i` | | Enable frame interpolation to specified FPS |
 | `--interpolation-mode` | | mci | Interpolation mode (mci, blend, dup, me, mc) |
 | `--slow-motion` | | | Create slow motion effect (factor) |
+| `--reverse-slow-motion` | | | Reverse slow motion effect (factor) |
 | `--dry-run` | | | Show what would be converted without converting |
 
 ### Video Splitting
@@ -136,19 +145,39 @@ python convert_sequences.py --split-videos --output-dir chunks
 ```bash
 # Convert image sequences with default settings
 python convert_sequences.py
+
+# Convert specific files
+python convert_sequences.py video1.mp4 image1.jpg
 ```
 **Input:** `render_0001.jpg`, `render_0002.jpg`, `render_0003.jpg`  
 **Output:** `render.mp4` (16fps)
+
+**Input:** `video1.mp4`, `image1.jpg`  
+**Output:** `video1.mp4`, `image1.mp4` (16fps)
 
 ### Example 2: Slow Motion Effect
 ```bash
 # Create 3x slow motion from 48fps footage
 python convert_sequences.py --frame-rate 48 --slow-motion 3.0
+
+# Create slow motion from specific video file
+python convert_sequences.py input_video.mp4 --frame-rate 48 --slow-motion 3.0
 ```
 **Input:** 48fps sequence (2 seconds)  
 **Output:** 16fps video (6 seconds) with smooth slow motion
 
-### Example 3: Frame Interpolation
+### Example 3: Reverse Slow Motion Effect
+```bash
+# Speed up a 3x slow motion video back to original speed
+python convert_sequences.py --frame-rate 16 --reverse-slow-motion 3.0
+
+# Reverse slow motion on specific file
+python convert_sequences.py slow_video.mp4 --frame-rate 16 --reverse-slow-motion 3.0
+```
+**Input:** 16fps slow motion video (6 seconds)  
+**Output:** 16fps video (2 seconds) at original speed
+
+### Example 4: Frame Interpolation
 ```bash
 # Upsample 24fps to 60fps with motion compensation
 python convert_sequences.py --interpolate-fps 60 --interpolation-mode mci
@@ -156,7 +185,7 @@ python convert_sequences.py --interpolate-fps 60 --interpolation-mode mci
 **Input:** 24fps sequence  
 **Output:** 60fps video with interpolated frames
 
-### Example 4: Video Splitting
+### Example 5: Video Splitting
 ```bash
 # Split videos into 81-frame chunks
 python convert_sequences.py --split-videos --chunk-frames 81
